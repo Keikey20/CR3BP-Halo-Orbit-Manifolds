@@ -1,0 +1,83 @@
+%% main.m %%
+
+clear; close all; clc
+
+% Inputs & Paramemters
+mu = 3.054248395728148e-06;  
+X0 = [1.008190522917249; 0; 0.001461007280283; 0; 0.010600776942245; 0]; 
+T  = 3.099249396215406;      
+opts = odeset('RelTol',1e-12,'AbsTol',1e-12,'Events',@poincare_event);
+% Output folder
+outdir = 'halo_output';
+if ~exist(outdir,'dir'), mkdir(outdir); end
+
+%%  differential correction of the periodic orbit
+do_correction = true;
+if do_correction
+    [Xcorr, Tc] = differential_correction(X0, T, mu);
+    X0 = Xcorr; T = Tc;
+    disp('Differential correction finished.');
+else
+    Xcorr = X0; Tc = T;
+end
+
+% Savin' corrected orbit
+save(fullfile(outdir,'X0_corrected.mat'),'X0','T','mu');
+%% Compute monodromy & eigenpairs
+[PhiT, eigvals, eigvecs] = compute_monodromy_and_eigs(X0,T,mu);
+fprintf('Eigenvalues:\n'); disp(eigvals.');
+
+save(fullfile(outdir,'monodromy.mat'),'PhiT','eigvals','eigvecs');
+%%  Generate manifolds
+epsilon = 1e-6;       % perturbation 
+numTraj = 8;
+manifoldSpan = 10*T;
+manif = generate_manifolds(X0, eigvals, eigvecs, mu, epsilon, numTraj, manifoldSpan);
+
+save(fullfile(outdir,'manifolds.mat'),'manif');
+%% Plottin' the results 
+figure('Position',[50 50 900 700]); hold on; grid on; axis equal
+plot(-mu,0,'ko','MarkerFaceColor','k','DisplayName','Primary 1');
+plot(1-mu,0,'ro','MarkerFaceColor','r','DisplayName','Primary 2');
+
+% periodic orbit 
+[tpo, Ypo] = ode45(@(t,y) cr3bp_eom(t,y,mu), linspace(0,T,1000), X0);
+plot3(Ypo(:,1),Ypo(:,2),Ypo(:,3),'k-','LineWidth',1.8,'DisplayName','Halo orbit');
+
+% manifold plotting
+colors = lines(length(manif));
+for k=1:length(manif)
+    Y = manif(k).Y;
+    if strcmp(manif(k).type,'unstable')
+        plot3(Y(:,1),Y(:,2),Y(:,3),'-','LineWidth',1.1,'Color',colors(k,:),'DisplayName',['Unstable ' num2str(k)]);
+    else
+        plot3(Y(:,1),Y(:,2),Y(:,3),'--','LineWidth',1.1,'Color',colors(k,:),'DisplayName',['Stable ' num2str(k)]);
+    end
+    plot3(manif(k).X0(1),manif(k).X0(2),manif(k).X0(3),'o','Color',colors(k,:));
+end
+
+xlabel('x'); ylabel('y'); zlabel('z'); title('Halo orbit and invariant manifolds'); view(3);
+legend('Location','bestoutside');
+saveas(gcf, fullfile(outdir,'halo_manifolds_3D.png'));
+%% Poincare plot for manifolds
+figure; hold on; grid on; xlabel('x'); ylabel('vx'); title('Poincare (y=0) projections');
+for k=1:length(manif)
+    YY = manif(k).Y;
+    % detect crossings near y=0:
+    idx = find(sign(YY(1:end-1,2)) ~= sign(YY(2:end,2)));
+    xs = [];
+    vxs = [];
+    for ii = idx'
+        % linear interp for crossing
+        t1 = manif(k).t(ii); t2 = manif(k).t(ii+1);
+        y1 = YY(ii,2); y2 = YY(ii+1,2);
+        alpha = abs(y1)/(abs(y1)+abs(y2));
+        xcross = YY(ii,1) + alpha*(YY(ii+1,1)-YY(ii,1));
+        vxcross = YY(ii,4) + alpha*(YY(ii+1,4)-YY(ii,4));
+        xs(end+1) = xcross; vxs(end+1) = vxcross;
+    end
+    scatter(xs,vxs,10);
+end
+saveas(gcf, fullfile(outdir,'poincare_y0.png'));
+
+fprintf('All files saved in folder: %s\n',outdir);
